@@ -105,7 +105,7 @@ func (c *SystemController) Login(ctx context.Context, req *LoginRequest) (Device
 	cmd = command.LoginCmd(c.useNsenter, req.TargetIQN, req.Portal)
 	loginOut, err := c.Run(ctx, cmd[0], cmd[1:]...)
 	if err != nil {
-		return "", fmt.Errorf("login to target failed; %w", err)
+		return c.Login(ctx, req)
 	}
 	if _, ok := parseLoginData(loginOut); !ok {
 		return "", errors.New("unexpected loging failure")
