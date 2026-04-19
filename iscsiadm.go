@@ -18,37 +18,10 @@ type SystemController struct {
 	useNsenter bool
 }
 
-type Device string
-
-type LoginRequest struct {
-	TargetIQN string
-	Portal    string
-}
-
-type LogoutRequest struct {
-	Portal    string
-	TargetIQN string
-}
-
-type DiscoverRequest struct {
-	Portal string
-}
-
-type RemoveRequest struct {
-	Portal    string
-	TargetIQN string
-}
-
 type Target struct {
 	name   string
 	portal string
 	lun    int
-}
-
-type Session struct {
-	target  string
-	portal  string
-	session string
 }
 
 type ControllerOptions func(*SystemController)
@@ -79,6 +52,13 @@ func New(opts ...ControllerOptions) *SystemController {
 	return ctrl
 }
 
+type Device string
+
+type LoginRequest struct {
+	TargetIQN string
+	Portal    string
+}
+
 // Login to an iSCSI target that has been discovered from a portal
 func (c *SystemController) Login(ctx context.Context, req *LoginRequest) (Device, error) {
 	if req.Portal == "" {
@@ -89,8 +69,8 @@ func (c *SystemController) Login(ctx context.Context, req *LoginRequest) (Device
 	}
 
 	// Check if the targetIQN exists in discoveryDB
-	cmd := command.ListCmd(c.useNsenter)
-	listOut, err := c.Run(ctx, cmd[0], cmd[1:]...)
+	resp := command.ListCmd(c.useNsenter)
+	listOut, err := c.Run(ctx, resp.Command(), resp.Args()...)
 	if err != nil {
 		return "", fmt.Errorf("failed listing discovered targets; %w", err)
 	}
@@ -102,8 +82,8 @@ func (c *SystemController) Login(ctx context.Context, req *LoginRequest) (Device
 		return "", fmt.Errorf("target %s, not in discovered nodes", req.TargetIQN)
 	}
 
-	cmd = command.LoginCmd(c.useNsenter, req.TargetIQN, req.Portal)
-	loginOut, err := c.Run(ctx, cmd[0], cmd[1:]...)
+	resp = command.LoginCmd(c.useNsenter, req.TargetIQN, req.Portal)
+	loginOut, err := c.Run(ctx, resp.Command(), resp.Args()...)
 	if err != nil {
 		return "", fmt.Errorf("login to target failed; %w", err)
 	}
@@ -152,6 +132,11 @@ func (c *SystemController) Login(ctx context.Context, req *LoginRequest) (Device
 	}
 }
 
+type LogoutRequest struct {
+	Portal    string
+	TargetIQN string
+}
+
 // Logout an active iSCSI session to a target
 func (c *SystemController) Logout(ctx context.Context, req *LogoutRequest) (bool, error) {
 	if req.Portal == "" {
@@ -161,8 +146,8 @@ func (c *SystemController) Logout(ctx context.Context, req *LogoutRequest) (bool
 		return false, errors.New("iSCSI target IQN required")
 	}
 
-	cmd := command.LogoutCmd(c.useNsenter, req.TargetIQN, req.Portal)
-	logutOut, err := c.Run(ctx, cmd[0], cmd[1:]...)
+	resp := command.LogoutCmd(c.useNsenter, req.TargetIQN, req.Portal)
+	logutOut, err := c.Run(ctx, resp.Command(), resp.Args()...)
 	if err != nil {
 		return false, fmt.Errorf("iSCSI target logout failed; %w", err)
 	}
@@ -174,10 +159,37 @@ func (c *SystemController) Logout(ctx context.Context, req *LogoutRequest) (bool
 	return true, nil
 }
 
+// Rescan checks for changes on a currently loggied in iSCSI target
+func (c *SystemController) Rescan(ctx context.Context, req *LogoutRequest) (bool, error) {
+	if req.Portal == "" {
+		return false, errors.New("iSCSI portal required")
+	}
+	if req.TargetIQN == "" {
+		return false, errors.New("iSCSI target IQN required")
+	}
+
+	resp := command.RescanCmd(c.useNsenter, req.TargetIQN, req.Portal)
+	rescanOut, err := c.Run(ctx, resp.Command(), resp.Args()...)
+	if err != nil {
+		return false, fmt.Errorf("iSCSI target rescan failed; %w", err)
+	}
+
+	// TODO: parse rescan target output
+	_ = rescanOut
+
+	return true, nil
+}
+
+type Session struct {
+	target  string
+	portal  string
+	session string
+}
+
 // Sessions returns a list of active sessions on the current system
 func (c *SystemController) Sessions(ctx context.Context) ([]Session, error) {
-	cmd := command.SessionsCmd(c.useNsenter)
-	sessionsOut, err := c.Run(ctx, cmd[0], cmd[1:]...)
+	resp := command.SessionsCmd(c.useNsenter)
+	sessionsOut, err := c.Run(ctx, resp.Command(), resp.Args()...)
 	if err != nil {
 		return []Session{}, fmt.Errorf("getting iSCSI sessions failed; %w", err)
 	}
@@ -186,14 +198,18 @@ func (c *SystemController) Sessions(ctx context.Context) ([]Session, error) {
 	return sessions, nil
 }
 
+type DiscoverRequest struct {
+	Portal string
+}
+
 // Discover performs an iSCSI discovery with sendtargets
 func (c *SystemController) Discover(ctx context.Context, req *DiscoverRequest) ([]Target, error) {
 	if req.Portal == "" {
 		return []Target{}, errors.New("iSCSI portal required")
 	}
-	cmd := command.DiscoverCmd(c.useNsenter, req.Portal)
 
-	stdout, err := c.Run(ctx, cmd[0], cmd[1:]...)
+	resp := command.DiscoverCmd(c.useNsenter, req.Portal)
+	stdout, err := c.Run(ctx, resp.Command(), resp.Args()...)
 	if err != nil {
 		return []Target{}, fmt.Errorf("discovering iSCSI targets failed; %w", err)
 	}
@@ -206,6 +222,11 @@ func (c *SystemController) Discover(ctx context.Context, req *DiscoverRequest) (
 	return targets, nil
 }
 
+type RemoveRequest struct {
+	Portal    string
+	TargetIQN string
+}
+
 // Remove deletes a specific target from the discovery DB
 func (c *SystemController) Remove(ctx context.Context, req *RemoveRequest) (bool, error) {
 	if req.Portal == "" {
@@ -216,8 +237,8 @@ func (c *SystemController) Remove(ctx context.Context, req *RemoveRequest) (bool
 	}
 
 	// Delete from discoveryDB
-	cmd := command.RemoveCmd(c.useNsenter, req.TargetIQN, req.Portal)
-	_, err := c.Run(ctx, cmd[0], cmd[1:]...)
+	resp := command.RemoveCmd(c.useNsenter, req.TargetIQN, req.Portal)
+	_, err := c.Run(ctx, resp.Command(), resp.Args()...)
 	if err != nil {
 		return false, fmt.Errorf("removal of iSCSI node failed; %w", err)
 	}
